@@ -1,43 +1,125 @@
-# Multimodal Multi-Agent RAG for Technical Manuals
+# Multi-Agent RAG for Technical Manuals
 
-Layered build (each layer is evaluated before the next is added):
+A Retrieval-Augmented Generation (RAG) system for answering questions from technical PDF manuals using hybrid retrieval, cross-encoder reranking, evidence-grounded answer generation, and an optional verifier agent. The system provides page-level citations and abstains when sufficient evidence is unavailable.
 
-| Layer | Status | What |
-|---|---|---|
-| 1. Text pipeline | **done** | PyMuPDF parsing (text + tables), BM25 + dense, RRF, cross-encoder rerank, cited answer, eval harness |
-| 2. Table/figure captions | todo | VLM API (e.g. Gemini Flash) fills `kind="figure"` placeholders and structured tables |
-| 3. Visual page retrieval | todo | ColPali/ColQwen (index once on free Colab GPU) vs caption-based retrieval |
-| 4. Agents (LangGraph) | todo | router, verifier (+ single-agent baseline for comparison) |
-| 5. UI | **done** | Streamlit app (`streamlit run app.py`) with cited-page viewer; failure analysis still todo |
+## Architecture
 
-## Run the app
+```text
+PDF Manuals → Parsing → Structure-aware Chunking → Indexing
+                                                      ↓
+User Query → BM25 + Dense Retrieval → RRF → Cross-Encoder Reranking
+                                                      ↓
+                                  Top 5 Chunks → Answer Agent
+                                                      ↓
+                                      Optional Verifier → Cited Answer
+```
+
+## Key Features
+
+- **Document parsing:** PyMuPDF extracts text, tables (Markdown), and numbered diagram legends.
+- **Chunking:** Page-aware, paragraph-based chunking with a target of 900 characters and 120-character overlap for long paragraphs.
+- **Hybrid retrieval:** BM25 (rank-bm25) and BGE-small-en-v1.5 embeddings with cosine similarity, combined using Reciprocal Rank Fusion (RRF).
+- **Reranking:** MS MARCO MiniLM cross-encoder reranks the top 30 candidates to return five chunks.
+- **Answer generation:** LLM-generated answers with source citations and evidence-based abstention; optional verifier checks faithfulness and relevance.
+- **Interface:** Streamlit application with PDF upload, indexing, question answering, and source-page viewing.
+
+The pipeline is implemented in Python using PyMuPDF, FastEmbed, NumPy, rank-bm25, and Streamlit, without LangChain or an external vector database.
+
+## Installation and Usage
+
+Run the following commands from the project root:
+
+```bash
+pip install -r requirements.txt
+```
+
+Place PDF manuals in `data/manuals/`. Alternatively, generate a sample manual and evaluation questions:
+
+```bash
+pip install reportlab
+python scripts/make_sample_manual.py
+```
+
+Build the index and query the system:
+
+```bash
+python scripts/ingest.py
+python scripts/ask.py "What does error E-203 indicate?"
+```
+
+Launch the web interface:
+
 ```bash
 streamlit run app.py
 ```
-Pages: **Ask** (chat + highlighted source page), **Library** (upload PDFs, build index), **Evaluate** (ablation table).
-Optional: pick an LLM provider and paste an API key in the sidebar for written step-by-step answers.
 
-Benchmarks and answer evaluation (TechManualQA, BEIR): see `EVALUATION.md` (`python scripts/eval_beir.py --dataset scifact`).
+The first indexing run downloads the embedding and reranking models. By default, the system returns extractive answers without an LLM API key.
 
-## Quick start
+### Enable LLM Answer Generation
+
+For example, install the OpenAI SDK and set `OPENAI_API_KEY` in your environment:
+
 ```bash
-pip install -r requirements.txt
-# put manuals in data/manuals/*.pdf  (or generate a toy one:)
-python scripts/make_sample_manual.py
-python scripts/ingest.py                       # builds indexes/text
-python scripts/ask.py "status LED blinks red three times"
-python scripts/evaluate.py                     # ablation table
+pip install openai
 ```
-`MANUAL_RAG_OFFLINE=1` skips model downloads (hash embeddings, no reranker) for smoke tests only;
-results from it are NOT meaningful. On a normal machine the first run downloads
-`bge-small-en-v1.5` and a MiniLM cross-encoder (CPU-friendly).
 
-## Evaluation set
-`data/eval/questions.jsonl`, one JSON per line:
-`{"question": "...", "type": "table|text|diagram|photo|unanswerable", "gold": [{"manual": "<pdf stem>", "page": 3}]}`
-Use `"gold": []` for questions the manuals cannot answer (tests the verifier's refusal later).
-Aim for 50-100 questions on 3-5 real manuals.
+Update the LLM section of `config.yaml`:
 
-## LLM
-Set `llm.provider` in `config.yaml` (`anthropic` | `gemini` | `openai`) and the matching API key env var.
-`none` returns an extractive cited answer.
+```yaml
+llm:
+  provider: openai
+  model: "<model-available-to-your-provider>"
+```
+
+Anthropic and Gemini are also supported with their respective SDKs and API keys. Retrieval and chunking parameters can be modified in `config.yaml`.
+
+## Evaluation
+
+Evaluated on 276 usable questions from **TechManualQA-350** (236 answerable and 40 unanswerable). Retrieval ground truth is derived from gold manual-page pairs and evidence snippets. Answer evaluation uses an LLM judge, deterministic citation checks, and abstention metrics.
+
+| Metric | Reported result |
+|---|---:|
+| Page-level Hit@5 (reported as Recall@5) | 95.3% |
+| Strict chunk-level Hit@5 | 92.8% |
+| MRR | 0.828 |
+| nDCG@10 | 0.866 |
+| Strict answer correctness | 80.1% |
+| Correct or partially correct | 90.3% |
+| Faithfulness (verifier-rated) | 98.2% |
+| Hallucination on unanswerable questions | 7.5% |
+
+To reproduce retrieval experiments, obtain the benchmark JSONL and corresponding PDFs (named by dataset `doc_id`):
+
+```bash
+python scripts/prepare_techmanualqa.py --src /path/to/TechManualQA_350.jsonl
+python scripts/ingest.py
+python scripts/evaluate.py --questions data/eval/techmanualqa.jsonl
+```
+
+Run end-to-end evaluation with API-accessible model IDs (replace the placeholders):
+
+```bash
+python scripts/run_pipeline.py --provider openai --model ANSWER_MODEL \
+  --verifier-provider openai --verifier-model VERIFIER_MODEL \
+  --judge-provider openai --judge-model JUDGE_MODEL --tag full
+python scripts/final_report.py --tag full
+```
+
+See [EVALUATION.md](EVALUATION.md) for detailed results, ablation studies, confidence intervals, and limitations.
+
+## Project Structure
+
+```text
+src/manual_rag/    # Parsing, embedding, retrieval, reranking, agents, evaluation
+scripts/           # Indexing, querying, benchmark preparation and evaluation
+app.py             # Streamlit interface
+config.yaml        # Pipeline configuration
+requirements.txt   # Dependencies
+EVALUATION.md      # Detailed experimental results
+```
+
+## Limitations and Future Work
+
+- Procedural questions may require evidence across multiple pages.
+- Manual routing and verifier ablations did not improve the reported final performance.
+- Figure captioning and visual page retrieval are planned; the current system retrieves textual content, tables, and diagram legends.

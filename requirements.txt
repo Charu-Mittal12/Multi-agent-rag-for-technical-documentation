@@ -1,0 +1,11 @@
+pymupdf
+rank-bm25
+fastembed          # CPU-friendly ONNX embeddings + cross-encoder reranker
+numpy
+pyyaml
+pandas
+streamlit>=1.50
+# Later layers (not needed yet):
+# langgraph
+# ragas
+# qdrant-client

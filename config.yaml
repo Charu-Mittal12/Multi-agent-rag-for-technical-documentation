@@ -1,0 +1,27 @@
+paths:
+  manuals_dir: data/manuals
+  index_dir: indexes/text
+  eval_file: data/eval/questions.jsonl
+
+chunking:
+  max_chars: 900        # target chunk size
+  overlap_chars: 120
+
+embeddings:
+  backend: fastembed     # fastembed | hash (offline fallback for tests)
+  model: BAAI/bge-small-en-v1.5
+
+reranker:
+  backend: fastembed     # fastembed | none
+  model: Xenova/ms-marco-MiniLM-L-6-v2
+  top_n: 30              # candidates passed to the reranker
+
+retrieval:
+  bm25_k: 50
+  dense_k: 50
+  rrf_k: 60
+  final_k: 5
+
+llm:
+  provider: none         # none | anthropic | gemini | openai  (none = extractive answer)
+  model: ""

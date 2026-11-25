@@ -1,0 +1,13 @@
+.venv/
+indexes/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+*.bak
+*.bak2
+*.bak3
+*.jsonl.bak*
+ManualPdf/
+TechManualQA_350/
+data/manuals/*.pdf
